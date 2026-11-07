@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../models/job_model.dart';
+import '../../services/api_service.dart';
 import '../../services/auth_service.dart';
 
 class RegisterScreen extends StatefulWidget {
@@ -26,6 +27,55 @@ class _RegisterScreenState extends State<RegisterScreen> {
       c.dispose();
     }
     super.dispose();
+  }
+
+  void _showServerSettings() {
+    final ctrl = TextEditingController(text: ApiService.baseUrl);
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Konfigurasi URL Server'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Pilih sesuai perangkat yang digunakan:\n'
+              '• Android Emulator: http://10.0.2.2:8000/api\n'
+              '• Chrome / Windows: http://127.0.0.1:8000/api\n'
+              '• HP Fisik: http://<IP_LAPTOP>:8000/api',
+              style: TextStyle(fontSize: 12),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: ctrl,
+              decoration: const InputDecoration(
+                labelText: 'Base URL API',
+                hintText: 'http://10.0.2.2:8000/api',
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Batal'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              setState(() {
+                ApiService.baseUrl = ctrl.text.trim();
+              });
+              Navigator.pop(ctx);
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text('URL Server diubah: ${ApiService.baseUrl}')),
+              );
+            },
+            child: const Text('Simpan'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _submit() async {
@@ -53,7 +103,16 @@ class _RegisterScreenState extends State<RegisterScreen> {
     } else {
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(SnackBar(content: Text(auth.error ?? 'Registrasi gagal')));
+      ).showSnackBar(
+        SnackBar(
+          content: Text(auth.error ?? 'Registrasi gagal'),
+          duration: const Duration(seconds: 4),
+          action: SnackBarAction(
+            label: 'Atur IP',
+            onPressed: _showServerSettings,
+          ),
+        ),
+      );
     }
   }
 
@@ -62,7 +121,16 @@ class _RegisterScreenState extends State<RegisterScreen> {
     final loading = context.watch<AuthService>().loading;
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Buat Akun')),
+      appBar: AppBar(
+        title: const Text('Buat Akun'),
+        actions: [
+          IconButton(
+            tooltip: 'Pengaturan Server API',
+            icon: const Icon(Icons.settings),
+            onPressed: _showServerSettings,
+          ),
+        ],
+      ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(20),
         child: Form(

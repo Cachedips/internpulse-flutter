@@ -61,9 +61,17 @@ class AuthService extends ChangeNotifier {
     });
   }
 
-  Future<bool> updateProfile({String? name, String? major, List<String>? skills}) {
+  Future<bool> updateProfile({
+    String? name,
+    String? major,
+    List<String>? skills,
+  }) {
     return _run(() async {
-      final res = await _api.updateProfile(name: name, major: major, skills: skills);
+      final res = await _api.updateProfile(
+        name: name,
+        major: major,
+        skills: skills,
+      );
       _user = UserModel.fromJson(_userMap(res));
     });
   }
@@ -71,7 +79,9 @@ class AuthService extends ChangeNotifier {
   Future<void> logout() async {
     try {
       await _api.logout();
-    } catch (_) {/* abaikan, token tetap dihapus lokal */}
+    } catch (_) {
+      /* abaikan, token tetap dihapus lokal */
+    }
     await _api.clearToken();
     _user = null;
     notifyListeners();
@@ -79,10 +89,13 @@ class AuthService extends ChangeNotifier {
 
   // ---------------------------------------------------------------------------
   Future<void> _storeSession(Map<String, dynamic> res) async {
-    final token = (res['token'] ??
-            res['access_token'] ??
-            (res['data'] is Map ? res['data']['token'] ?? res['data']['access_token'] : null))
-        ?.toString();
+    final token =
+        (res['token'] ??
+                res['access_token'] ??
+                (res['data'] is Map
+                    ? res['data']['token'] ?? res['data']['access_token']
+                    : null))
+            ?.toString();
     if (token == null || token.isEmpty) {
       throw ApiException('Token tidak diterima dari server.');
     }

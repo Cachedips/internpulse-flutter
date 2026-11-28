@@ -9,7 +9,7 @@ use Illuminate\Support\Facades\Route;
 
 // ---------- Public ----------
 Route::post('/register', [AuthController::class, 'register']);
-Route::post('/login', [AuthController::class, 'login']);
+Route::post('/login', [AuthController::class, 'login'])->name('login');
 
 // ---------- Protected (Bearer token Sanctum) ----------
 Route::middleware('auth:sanctum')->group(function () {
@@ -23,9 +23,10 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/jobs', [JobController::class, 'index']);
     Route::post('/jobs/skill-gap', [AnalyticsController::class, 'skillGap']);
 
-    // Market Analytics & Scarcity Index
+    // Market Analytics & Scarcity Index & AI Job Recommendations
     Route::get('/analytics/market-trends', [AnalyticsController::class, 'marketTrends']);
     Route::get('/analytics/skill-scarcity', [AnalyticsController::class, 'skillScarcity']);
+    Route::get('/analytics/recommendations', [AnalyticsController::class, 'recommendations']);
 
     // Kanban tracker
     Route::get('/trackers', [TrackerController::class, 'index']);

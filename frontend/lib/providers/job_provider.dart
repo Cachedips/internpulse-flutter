@@ -26,9 +26,15 @@ class JobProvider extends ChangeNotifier {
     _error = null;
     notifyListeners();
     try {
-      final res = await _api.getJobs(location: _location, major: _major, search: _search);
+      final res = await _api.getJobs(
+        location: _location,
+        major: _major,
+        search: _search,
+      );
       final list = (res['data'] as List?) ?? [];
-      _jobs = list.map((e) => JobModel.fromJson(e as Map<String, dynamic>)).toList();
+      _jobs = list
+          .map((e) => JobModel.fromJson(e as Map<String, dynamic>))
+          .toList();
     } on ApiException catch (e) {
       _error = e.message;
     } finally {
@@ -38,7 +44,11 @@ class JobProvider extends ChangeNotifier {
   }
 
   void setLocation(String? value) {
-    _location = (value == _location) ? null : value; // tap lagi = hapus filter
+    if (value == null || value == 'Semua' || value == _location) {
+      _location = null;
+    } else {
+      _location = value;
+    }
     fetchJobs();
   }
 
@@ -54,7 +64,10 @@ class JobProvider extends ChangeNotifier {
 
   /// Skill Gap Analyzer. Skill user diambil backend dari akun yang login.
   Future<Map<String, dynamic>> analyze(JobModel job) {
-    return _api.analyzeSkillGap(jobTitle: job.jobTitle, jobRequirements: job.requirements);
+    return _api.analyzeSkillGap(
+      jobTitle: job.jobTitle,
+      jobRequirements: job.requirements,
+    );
   }
 
   /// Smart Match & Skill Gap (Fitur Baru).

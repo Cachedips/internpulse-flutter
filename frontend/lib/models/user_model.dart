@@ -22,6 +22,8 @@ class UserModel {
   final String? major;
   final List<String> skills;
 
+  List<String> get userSkills => skills;
+
   const UserModel({
     required this.id,
     required this.name,

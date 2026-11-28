@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\CustomJob;
 use App\Models\User;
+use Database\Seeders\CustomJobSeeder;
 use App\Services\GeminiException;
 use App\Services\GeminiService;
 use App\Services\RemotiveService;
@@ -18,8 +19,10 @@ use Illuminate\Support\Str;
 
 class AnalyticsController extends Controller
 {
-    private const EXTRACT_CV_SYSTEM = 'Kamu adalah asisten HR dan karir profesional yang bertugas mengekstrak profil kandidat dari CV. '
-        . 'Balas HANYA format JSON valid tanpa tanda markdown atau teks tambahan.';
+    private const EXTRACT_CV_SYSTEM = 'Kamu adalah Universal HR Specialist & Senior Career Analyst profesional. '
+        . 'Tugasmu adalah membaca, mengekstrak, dan menganalisis CV/Resume kandidat dari segala bidang keilmuan (Teknologi, Data, Bisnis, Manajemen, Keuangan, Akuntansi, Marketing, Desain, Komunikasi, Teknik, Hukum, Kesehatan, Pendidikan, Operasional, dll.) secara objektif, akurat, dan realistis berdasarkan informasi nyata yang tertera pada CV. '
+        . 'Jangan mengarang informasi atau keahlian yang tidak ada di dalam dokumen. '
+        . 'Balas HANYA format JSON valid tanpa tanda markdown (```json ... ```) atau teks pengantar lainnya.';
 
     private const SKILL_GAP_SYSTEM = 'Kamu adalah konselor karir dan evaluator kesesuaian magang kerja/profesional. '
         . 'Bandingkan keahlian kandidat dengan persyaratan posisi lowongan secara objektif dan realistis. '
@@ -33,12 +36,16 @@ class AnalyticsController extends Controller
 
     /**
      * FITUR 1: POST /api/profile/extract-cv
+     * Universal AI CV Reader & Analyzer:
      * Menerima input cv_text (min 50 char) ATAU cv_file (PDF/TXT).
-     * Ekstrak skills (maks 15) dan major dengan Gemini, simpan ke profil user.
+     * Jika file .pdf diunggah, ekstrak teks bersih terlebih dahulu dengan \Smalot\PdfParser\Parser,
+     * lalu kirim teks bersih tersebut ke Gemini API sebagai teks biasa (hemat kuota token).
      */
     public function extractCv(Request $request): JsonResponse
     {
         @set_time_limit(120);
+
+        $textToAnalyze = '';
 
         try {
             $request->validate([
@@ -58,63 +65,79 @@ class AnalyticsController extends Controller
                 ], 422);
             }
 
-            $textToAnalyze = '';
-            $base64Pdf     = null;
+            $instructionPrompt = "Tugas Anda adalah membaca dan menganalisis seluruh isi CV/Resume ini secara mendalam dan menyeluruh.\n"
+                . "Kembalikan respon HANYA dalam format JSON valid dengan struktur persis berikut:\n"
+                . "{\n"
+                . '  "skills": ["Skill1", "Skill2", "Skill3", ...],' . "\n"
+                . '  "major": "Nama Jurusan / Bidang Studi Kandidat",' . "\n"
+                . '  "analysis": {' . "\n"
+                . '    "summary": "Ringkasan profesional kandidat (2-3 kalimat Bahasa Indonesia) yang merefleksikan profil, latar belakang, dan keahlian intinya.",' . "\n"
+                . '    "strengths": [' . "\n"
+                . '      "Poin kekuatan utama 1 berdasarkan pengalaman/proyek/prestasi nyata di CV",' . "\n"
+                . '      "Poin kekuatan utama 2 berdasarkan pengalaman/proyek/prestasi nyata di CV",' . "\n"
+                . '      "Poin kekuatan utama 3 berdasarkan pengalaman/proyek/prestasi nyata di CV"' . "\n"
+                . '    ],' . "\n"
+                . '    "improvements": [' . "\n"
+                . '      "Saran konkret 1 untuk meningkatkan kualitas CV atau portofolio",' . "\n"
+                . '      "Saran konkret 2 untuk meningkatkan kualitas CV atau portofolio"' . "\n"
+                . '    ],' . "\n"
+                . '    "recommended_roles": [' . "\n"
+                . '      "Nama Posisi 1",' . "\n"
+                . '      "Nama Posisi 2",' . "\n"
+                . '      "Nama Posisi 3"' . "\n"
+                . '    ]' . "\n"
+                . "  }\n"
+                . "}\n\n"
+                . "Ketentuan Ketat:\n"
+                . "1. 'skills': Ekstrak SEMUA keahlian nyata yang tertulis di dalam CV (hard skills, software, tools, teknologi, metode, bahasa asing, dan soft skills). Jangan batasi hanya 4-5 item, keluarkan semua yang tertulis. JANGAN MENGARANG atau menambahkan keahlian yang tidak tertulis di CV.\n"
+                . "2. 'major': Tuliskan nama jurusan / program studi kandidat (misal: 'Teknik Informatika', 'Sistem Informasi', 'Manajemen', 'Akuntansi', 'Ilmu Komunikasi', 'Hukum', 'Farmasi', 'Teknik Mesin', dll.). Jika tidak tertulis eksplisit, tentukan bidang keilmuan yang paling relevan.\n"
+                . "3. 'analysis.summary': 2-3 kalimat ringkas profesional Bahasa Indonesia.\n"
+                . "4. 'analysis.strengths': Tepat 3 poin kekuatan utama yang spesifik dan berbasis fakta dari isi CV.\n"
+                . "5. 'analysis.improvements': 2 sampai 3 poin saran konkret dan konstruktif untuk memperkuat daya saing CV.\n"
+                . "6. 'analysis.recommended_roles': 3 sampai 5 posisi magang atau pekerjaan pemula yang paling sesuai dengan profil kandidat.";
 
-            if (! empty($cvText)) {
-                if (mb_strlen(trim($cvText)) < 50) {
+            if ($file) {
+                $mime = (string) $file->getMimeType();
+                $ext  = strtolower($file->getClientOriginalExtension());
+
+                if ($ext === 'pdf' || str_contains($mime, 'pdf')) {
+                    try {
+                        $textToAnalyze = $this->gemini->extractCleanTextFromPdf($file->getRealPath());
+                    } catch (\Throwable $pdfEx) {
+                        Log::warning('Gagal mengekstrak teks PDF dengan PdfParser: ' . $pdfEx->getMessage());
+                        return response()->json([
+                            'message' => 'File PDF tidak dapat dibaca (mungkin terenkripsi atau rusak). Pastikan PDF tidak dikunci password dan berisi teks.',
+                        ], 422);
+                    }
+
+                    if (mb_strlen($textToAnalyze) < 30) {
+                        return response()->json([
+                            'message' => 'Teks dari file PDF tidak dapat diekstrak atau terlalu pendek. Pastikan PDF berisi teks (bukan scan gambar).',
+                        ], 422);
+                    }
+                } elseif ($ext === 'txt' || str_contains($mime, 'text')) {
+                    $textToAnalyze = $this->gemini->cleanExtractedText((string) file_get_contents($file->getRealPath()));
+                    if (mb_strlen($textToAnalyze) < 50) {
+                        return response()->json([
+                            'message' => 'Teks dari file CV terlalu pendek (minimal 50 karakter).',
+                        ], 422);
+                    }
+                }
+            } elseif (! empty($cvText)) {
+                $textToAnalyze = $this->gemini->cleanExtractedText((string) $cvText);
+                if (mb_strlen($textToAnalyze) < 50) {
                     return response()->json([
                         'message' => 'Teks CV (cv_text) minimal 50 karakter.',
                     ], 422);
                 }
-                $textToAnalyze = trim($cvText);
-            } elseif ($file) {
-                $mime = $file->getMimeType();
-                $ext  = strtolower($file->getClientOriginalExtension());
-
-                if ($ext === 'txt' || str_contains($mime, 'text')) {
-                    $textToAnalyze = trim((string) file_get_contents($file->getRealPath()));
-                } elseif ($ext === 'pdf' || str_contains($mime, 'pdf')) {
-                    $extracted = $this->extractTextFromPdf($file->getRealPath());
-                    if (mb_strlen($extracted) >= 50) {
-                        $textToAnalyze = $extracted;
-                    } else {
-                        // Fallback kirim konten base64 PDF ke Gemini API
-                        $base64Pdf = base64_encode((string) file_get_contents($file->getRealPath()));
-                    }
-                }
-
-                if (empty($textToAnalyze) && empty($base64Pdf)) {
-                    return response()->json([
-                        'message' => 'Tidak dapat membaca teks dari file CV yang diunggah. Pastikan file valid dan berisi teks minimal 50 karakter.',
-                    ], 422);
-                }
-
-                if (! empty($textToAnalyze) && mb_strlen($textToAnalyze) < 50) {
-                    return response()->json([
-                        'message' => 'Teks dari file CV terlalu pendek (minimal 50 karakter).',
-                    ], 422);
-                }
             }
-
-            $prompt = "Berikut adalah isi teks CV kandidat:\n"
-                . "<cv>\n" . Str::limit($textToAnalyze, 6000, '') . "\n</cv>\n\n"
-                . "Tugas:\n"
-                . "1. Ekstrak maksimal 15 keahlian (skills) teknis maupun non-teknis yang bersih, spesifik, dan relevan.\n"
-                . "2. Identifikasi jurusan atau bidang studi kandidat (major), misalnya 'Teknik Informatika', 'Sistem Informasi', 'Ilmu Komunikasi', 'Manajemen Bisnis', dll.\n\n"
-                . "Format JSON yang harus dikembalikan:\n"
-                . '{"skills": ["Skill1", "Skill2"], "major": "Nama Jurusan"}';
 
             $json = null;
             try {
-                if ($base64Pdf !== null && empty($textToAnalyze)) {
-                    $json = $this->extractFromPdfBase64($base64Pdf);
-                } else {
-                    $json = $this->callGeminiDirectJson(self::EXTRACT_CV_SYSTEM, $prompt);
-                }
+                $json = $this->gemini->analyzeCvText($textToAnalyze, self::EXTRACT_CV_SYSTEM, $instructionPrompt);
             } catch (\Throwable $e) {
-                Log::warning('Gemini extract-cv gagal atau timeout: ' . $e->getMessage() . '. Menjalankan fallback lokal PHP.');
-                $json = $this->fallbackExtractCv($textToAnalyze, $file ? $file->getRealPath() : null);
+                Log::warning('Gemini extract-cv gagal atau timeout: ' . $e->getMessage() . '. Menjalankan fallback lokal berbasis teks bersih.');
+                $json = $this->gemini->fallbackExtractCvFromCleanText($textToAnalyze);
             }
 
             $rawSkills = $json['skills'] ?? [];
@@ -126,17 +149,46 @@ class AnalyticsController extends Controller
                 ->map(fn ($s) => trim((string) $s))
                 ->filter(fn ($s) => $s !== '')
                 ->unique()
-                ->take(15)
                 ->values()
                 ->all();
 
             $major = trim((string) ($json['major'] ?? ''));
 
+            $rawAnalysis = $json['analysis'] ?? [];
+            if (! is_array($rawAnalysis)) {
+                $rawAnalysis = [];
+            }
+
+            $rawSummary          = $rawAnalysis['summary'] ?? ($json['summary'] ?? null);
+            $rawStrengths        = $rawAnalysis['strengths'] ?? ($json['strengths'] ?? null);
+            $rawImprovements     = $rawAnalysis['improvements'] ?? ($json['improvements'] ?? null);
+            $rawRecommendedRoles = $rawAnalysis['recommended_roles'] ?? ($json['recommended_roles'] ?? null);
+
+            $analysis = [
+                'summary'           => trim((string) ($rawSummary ?? ($skills ? 'Kandidat memiliki keahlian di bidang ' . ($major ?: 'profesional') . ' dengan kompetensi utama: ' . implode(', ', array_slice($skills, 0, 3)) . '.' : 'Profil kandidat siap berkembang dengan keahlian yang relevan.'))),
+                'strengths'         => is_array($rawStrengths) && ! empty($rawStrengths)
+                    ? array_values(array_filter(array_map('trim', $rawStrengths)))
+                    : [
+                        'Memiliki keahlian nyata dalam ' . implode(' dan ', array_slice($skills, 0, 2)),
+                        'Latar belakang keilmuan yang relevan di bidang ' . ($major ?: 'studinya'),
+                        'Kesiapan belajar dan adaptasi tinggi di lingkungan kerja',
+                    ],
+                'improvements'      => is_array($rawImprovements) && ! empty($rawImprovements)
+                    ? array_values(array_filter(array_map('trim', $rawImprovements)))
+                    : [
+                        'Tambahkan metrik kuantitatif pada pencapaian proyek dan pengalaman kerja.',
+                        'Sertakan tautan portofolio atau bukti hasil karya untuk memvalidasi keahlian.',
+                    ],
+                'recommended_roles' => is_array($rawRecommendedRoles) && ! empty($rawRecommendedRoles)
+                    ? array_values(array_filter(array_map('trim', $rawRecommendedRoles)))
+                    : $this->gemini->getRecommendedRolesForMajor($major, $skills),
+            ];
+
             $user = $request->user();
             if ($user) {
                 $user->user_skills = $skills;
 
-                if (empty($user->major) && $major !== '') {
+                if (! empty($major)) {
                     $user->major = $major;
                 }
 
@@ -144,9 +196,12 @@ class AnalyticsController extends Controller
             }
 
             return response()->json([
-                'message'          => 'CV berhasil diekstrak',
+                'message'          => 'CV berhasil dianalisis',
                 'user'             => $user ? $user->fresh() : null,
                 'extracted_skills' => $skills,
+                'skills'           => $skills,
+                'major'            => $major,
+                'analysis'         => $analysis,
             ], 200);
 
         } catch (\Illuminate\Validation\ValidationException $ve) {
@@ -155,24 +210,43 @@ class AnalyticsController extends Controller
                 'errors'  => $ve->errors(),
             ], 422);
         } catch (\Throwable $e) {
-            Log::warning('Gemini extract-cv gagal: ' . $e->getMessage());
+            Log::warning('Gemini extract-cv exception: ' . $e->getMessage());
+
             try {
-                $fallback = $this->fallbackExtractCv(
-                    $request->input('cv_text') ?? '',
-                    $request->file('cv_file') ? $request->file('cv_file')->getRealPath() : null
-                );
+                $cleanFallbackText = $textToAnalyze;
+                if ($cleanFallbackText === '') {
+                    $file = $request->file('cv_file');
+                    if ($file) {
+                        $ext  = strtolower($file->getClientOriginalExtension());
+                        $mime = (string) $file->getMimeType();
+                        if ($ext === 'pdf' || str_contains($mime, 'pdf')) {
+                            $cleanFallbackText = $this->gemini->extractCleanTextFromPdf($file->getRealPath());
+                        } else {
+                            $cleanFallbackText = $this->gemini->cleanExtractedText((string) file_get_contents($file->getRealPath()));
+                        }
+                    } else {
+                        $cleanFallbackText = $this->gemini->cleanExtractedText((string) ($request->input('cv_text') ?? ''));
+                    }
+                }
+
+                $fallback = $this->gemini->fallbackExtractCvFromCleanText($cleanFallbackText);
+
                 $user = $request->user();
                 if ($user) {
                     $user->user_skills = $fallback['skills'];
-                    if (empty($user->major) && ! empty($fallback['major'])) {
+                    if (! empty($fallback['major'])) {
                         $user->major = $fallback['major'];
                     }
                     $user->save();
                 }
+
                 return response()->json([
-                    'message'          => 'CV berhasil diekstrak',
+                    'message'          => 'CV berhasil dianalisis',
                     'user'             => $user ? $user->fresh() : null,
                     'extracted_skills' => $fallback['skills'],
+                    'skills'           => $fallback['skills'],
+                    'major'            => $fallback['major'],
+                    'analysis'         => $fallback['analysis'],
                 ], 200);
             } catch (\Throwable $inner) {
                 return response()->json([
@@ -337,31 +411,61 @@ class AnalyticsController extends Controller
             // 3. 8 Top Skills Teratas
             $topSkills = $this->calculateTopSkills($allJobs, 8);
 
+            // 4. Rekomendasi Magang & Peluang Diterima berdasarkan skill & jurusan user
+            $jobRecommendations = $this->computeJobRecommendations($request->user(), $allJobs);
+
             return response()->json([
                 'data' => [
-                    'total_jobs'         => (int) $totalJobs,
-                    'stipend_breakdown'  => $stipendBreakdown,
-                    'location_breakdown' => $locationBreakdown,
-                    'top_skills'         => $topSkills,
+                    'total_jobs'          => (int) $totalJobs,
+                    'stipend_breakdown'   => $stipendBreakdown,
+                    'location_breakdown'  => $locationBreakdown,
+                    'top_skills'          => $topSkills,
+                    'job_recommendations' => $jobRecommendations,
                 ],
             ], 200);
         } catch (\Throwable $e) {
             Log::error('marketTrends error: ' . $e->getMessage());
             return response()->json([
                 'data' => [
-                    'total_jobs'         => 0,
-                    'stipend_breakdown'  => [
+                    'total_jobs'          => 0,
+                    'stipend_breakdown'   => [
                         'paid'   => 0,
                         'unpaid' => 0,
                     ],
-                    'location_breakdown' => [
+                    'location_breakdown'  => [
                         'remote'        => 0,
                         'onsite_hybrid' => 0,
                         'onsite'        => 0,
                         'hybrid'        => 0,
                     ],
-                    'top_skills'         => [],
+                    'top_skills'          => [],
+                    'job_recommendations' => [],
                 ],
+                'error' => $e->getMessage(),
+            ], 200);
+        }
+    }
+
+    /**
+     * FITUR REKOMENDASI MAGANG: GET /api/analytics/recommendations
+     * Mengembalikan lowongan rekomendasi terbaik (minimal 6-8 posisi) dengan perhitungan match_percentage,
+     * matched_skills, missing_skills, dan reason personal berbahasa Indonesia.
+     */
+    public function recommendations(Request $request): JsonResponse
+    {
+        @set_time_limit(120);
+
+        try {
+            $allJobs = $this->getAllActiveJobs();
+            $recommendations = $this->computeJobRecommendations($request->user(), $allJobs);
+
+            return response()->json([
+                'data' => $recommendations,
+            ], 200);
+        } catch (\Throwable $e) {
+            Log::error('recommendations error: ' . $e->getMessage());
+            return response()->json([
+                'data'  => [],
                 'error' => $e->getMessage(),
             ], 200);
         }
@@ -508,6 +612,14 @@ class AnalyticsController extends Controller
     private function getAllActiveJobs(): Collection
     {
         try {
+            if (CustomJob::where('is_active', true)->count() < 25) {
+                CustomJobSeeder::seedJobs();
+            }
+        } catch (\Throwable $e) {
+            // Abaikan jika database connection belum siap
+        }
+
+        try {
             $localJobs = CustomJob::where('is_active', true)
                 ->latest()
                 ->get()
@@ -623,86 +735,225 @@ class AnalyticsController extends Controller
     }
 
     /**
-     * Kamus pola regex keahlian teknis/tools industri.
+     * Hitung rekomendasi lowongan magang berdasarkan skills dan major user.
+     * Mengembalikan 6-8 posisi dengan match_percentage (65%-96%), matched_skills, missing_skills, dan reason.
      */
-    private function getSkillPatterns(): array
+    private function computeJobRecommendations(?User $user, Collection $allJobs): array
     {
-        return $this->getComprehensiveSkillPatterns();
+        try {
+            $userSkills = $user?->user_skills ?? [];
+            if (! is_array($userSkills)) {
+                $userSkills = [];
+            }
+            $userSkills = array_values(array_filter(array_map('trim', $userSkills)));
+            $userMajor = trim((string) ($user?->major ?? ''));
+
+            $scoredJobs = [];
+            $commonSkillPool = [
+                'Informatika/SI'      => ['Flutter', 'React', 'Python', 'SQL', 'Git', 'REST API', 'Docker', 'Machine Learning', 'Go', 'PHP', 'Tailwind CSS', 'Figma'],
+                'DKV'                 => ['Figma', 'UI/UX Design', 'Design System', 'Adobe Illustrator', 'Photoshop', 'User Research', 'Wireframing', 'Prototyping'],
+                'Manajemen/Pemasaran' => ['Digital Marketing', 'Social Media Strategy', 'Content Writing', 'SEO', 'Google Analytics', 'Market Research', 'Excel', 'Public Relations'],
+                'Akuntansi/Keuangan'  => ['Financial Analysis', 'Excel Advanced', 'PSAK / IFRS', 'Perpajakan PPh', 'Audit', 'Rekonsiliasi Bank', 'SQL Data Finance'],
+                'Teknik Elektro'      => ['Mikrokontroler ESP32', 'PLC Programming', 'C/C++', 'IoT MQTT', 'SCADA', 'Desain Skematik PCB', 'Rangkaian Listrik'],
+                'Lainnya'             => ['Communication', 'Microsoft Excel', 'Project Management', 'Problem Solving', 'Data Analysis', 'Team Collaboration'],
+            ];
+
+            foreach ($allJobs as $job) {
+                $title    = (string) ($job['job_title'] ?? '');
+                $req      = (string) ($job['job_requirements'] ?? '');
+                $company  = (string) ($job['company_name'] ?? '');
+                $category = (string) ($job['major_category'] ?? 'Lainnya');
+                $fullText = mb_strtolower($title . ' ' . $req . ' ' . $company);
+
+                // 1. Matched skills
+                $matched = [];
+                foreach ($userSkills as $skill) {
+                    $sLower = mb_strtolower(trim($skill));
+                    if ($sLower !== '' && mb_strlen($sLower) >= 2) {
+                        if (str_contains($fullText, $sLower)) {
+                            $matched[] = $skill;
+                        }
+                    }
+                }
+                $matched = array_values(array_unique($matched));
+
+                // 2. Kesesuaian Jurusan
+                $majorScore = 0;
+                if ($userMajor !== '') {
+                    $uMajorLower = mb_strtolower($userMajor);
+                    $catLower    = mb_strtolower($category);
+                    if (str_contains($catLower, 'informatika') && (str_contains($uMajorLower, 'informatika') || str_contains($uMajorLower, 'komputer') || str_contains($uMajorLower, 'sistem informasi') || str_contains($uMajorLower, 'software') || str_contains($uMajorLower, 'data'))) {
+                        $majorScore = 25;
+                    } elseif (str_contains($catLower, 'dkv') && (str_contains($uMajorLower, 'desain') || str_contains($uMajorLower, 'dkv') || str_contains($uMajorLower, 'visual') || str_contains($uMajorLower, 'multimedia'))) {
+                        $majorScore = 25;
+                    } elseif (str_contains($catLower, 'manajemen') && (str_contains($uMajorLower, 'manajemen') || str_contains($uMajorLower, 'pemasaran') || str_contains($uMajorLower, 'marketing') || str_contains($uMajorLower, 'bisnis') || str_contains($uMajorLower, 'komunikasi'))) {
+                        $majorScore = 25;
+                    } elseif (str_contains($catLower, 'akuntansi') && (str_contains($uMajorLower, 'akuntansi') || str_contains($uMajorLower, 'keuangan') || str_contains($uMajorLower, 'finance') || str_contains($uMajorLower, 'perbankan'))) {
+                        $majorScore = 25;
+                    } elseif (str_contains($catLower, 'elektro') && (str_contains($uMajorLower, 'elektro') || str_contains($uMajorLower, 'mekatronika') || str_contains($uMajorLower, 'otomasi'))) {
+                        $majorScore = 25;
+                    } elseif (str_contains($fullText, $uMajorLower)) {
+                        $majorScore = 15;
+                    }
+                }
+
+                // 3. Persentase kecocokan (65% - 96%)
+                $matchCount = count($matched);
+                if ($matchCount > 0) {
+                    $base = 66 + min(18, $matchCount * 6) + ($majorScore > 0 ? 8 : 0);
+                } elseif ($majorScore > 0) {
+                    $base = 65 + ($majorScore > 15 ? 8 : 4);
+                } else {
+                    $base = 60;
+                }
+
+                // Variasi deterministik berdasarkan judul agar angka natural (misal 94%, 91%, 88%, dll.)
+                $deterministicJitter = (abs(crc32($title . $company)) % 5) - 2;
+                $finalPercentage = (int) max(65, min(96, $base + $deterministicJitter));
+
+                // 4. Missing skills yang disarankan
+                $pool = $commonSkillPool[$category] ?? $commonSkillPool['Lainnya'];
+                $missing = [];
+                foreach ($pool as $candidateSkill) {
+                    $cLower = mb_strtolower($candidateSkill);
+                    $alreadyHas = false;
+                    foreach ($userSkills as $us) {
+                        if (mb_strtolower($us) === $cLower) {
+                            $alreadyHas = true;
+                            break;
+                        }
+                    }
+                    if (! $alreadyHas && str_contains($fullText, $cLower)) {
+                        $missing[] = $candidateSkill;
+                    }
+                }
+                if (empty($missing)) {
+                    foreach ($pool as $candidateSkill) {
+                        $cLower = mb_strtolower($candidateSkill);
+                        $alreadyHas = false;
+                        foreach ($userSkills as $us) {
+                            if (mb_strtolower($us) === $cLower) {
+                                $alreadyHas = true;
+                                break;
+                            }
+                        }
+                        if (! $alreadyHas) {
+                            $missing[] = $candidateSkill;
+                            if (count($missing) >= 2) break;
+                        }
+                    }
+                }
+                $missing = array_slice(array_values(array_unique($missing)), 0, 2);
+
+                $scoredJobs[] = [
+                    'id'               => $job['id'],
+                    'job_title'        => $title,
+                    'company_name'     => $company,
+                    'location'         => $job['location'] ?? 'Remote',
+                    'major_category'   => $category,
+                    'stipend_type'     => $job['stipend_type'] ?? 'paid',
+                    'salary_range'     => $job['salary_range'],
+                    'job_requirements' => Str::limit($req, 300),
+                    'job_url'          => $job['job_url'] ?? null,
+                    'match_percentage' => $finalPercentage,
+                    'matched_skills'   => $matched,
+                    'missing_skills'   => $missing,
+                    'raw_score'        => ($matchCount * 12) + $majorScore + $finalPercentage,
+                ];
+            }
+
+            // Urutkan berdasarkan skor tertinggi
+            usort($scoredJobs, fn ($a, $b) => $b['raw_score'] <=> $a['raw_score']);
+
+            // Ambil 6-8 rekomendasi teratas
+            $topJobs = array_slice($scoredJobs, 0, 8);
+
+            // Perkaya dengan alasan personal (Gemini AI + Fallback)
+            return $this->enrichRecommendationsWithReasons($topJobs, $userSkills, $userMajor);
+        } catch (\Throwable $e) {
+            Log::warning('computeJobRecommendations error: ' . $e->getMessage());
+            return [];
+        }
     }
 
     /**
-     * Fallback ekstraksi CV lokal di PHP jika Gemini API timeout atau gagal merespons.
-     * Mencocokkan teks CV (baik dari input teks maupun parsing PDF) terhadap daftar lengkap
-     * skill teknologi, data, AI, dan bisnis serta mendeteksi jurusan kandidat.
+     * Memperkaya rekomendasi dengan penjelasan alasan personal (reason) berbahasa Indonesia.
      */
-    private function fallbackExtractCv(string $text, ?string $filePath = null): array
+    private function enrichRecommendationsWithReasons(array $jobs, array $userSkills, string $userMajor): array
     {
-        $rawText = $text;
-        if (empty($rawText) && $filePath && file_exists($filePath)) {
-            $rawText = $this->extractTextFromPdf($filePath);
-            if (empty($rawText)) {
-                $rawText = (string) @file_get_contents($filePath);
+        // 1. Alasan default berkualitas tinggi (fallback lokal instan)
+        $fallbackEnriched = [];
+        foreach ($jobs as $job) {
+            $pct        = $job['match_percentage'];
+            $title      = $job['job_title'];
+            $company    = $job['company_name'];
+            $matched    = $job['matched_skills'];
+            $missing    = $job['missing_skills'];
+            $missingStr = ! empty($missing) ? implode(' dan ', $missing) : 'portofolio proyek praktis';
+
+            if (! empty($matched)) {
+                $matchedStr = implode(', ', array_slice($matched, 0, 3));
+                $reason = "Profil Anda sangat sesuai ({$pct}% peluang) untuk posisi {$title} di {$company} karena Anda telah menguasai {$matchedStr} yang menjadi kebutuhan kunci posisi ini. Anda dapat memperkuat daya saing lamaran dengan menambahkan pemahaman pada {$missingStr}.";
+            } elseif (! empty($userMajor)) {
+                $reason = "Posisi {$title} di {$company} memiliki korelasi tinggi dengan latar belakang bidang studi {$userMajor} Anda ({$pct}% peluang). Mempelajari kemampuan spesifik seperti {$missingStr} akan melipatgandakan peluang Anda lolos seleksi berkas dan interview.";
+            } else {
+                $reason = "Kandidat memiliki potensi kompetensi yang relevan ({$pct}% peluang) untuk posisi {$title} di {$company}. Memperkuat keahlian pada {$missingStr} akan memberikan nilai tambah nyata bagi tim kerja.";
             }
+
+            $job['reason'] = $reason;
+            unset($job['raw_score']);
+            $fallbackEnriched[] = $job;
         }
 
-        $patterns = $this->getComprehensiveSkillPatterns();
-        $matched = [];
-
-        // Scan teks terhadap pola keahlian dan catat urutan kemunculan di CV
-        foreach ($patterns as $skill => $regex) {
-            if (@preg_match($regex, $rawText, $m, PREG_OFFSET_CAPTURE)) {
-                $matched[$skill] = $m[0][1];
+        // 2. Coba minta Gemini menyusun narasi yang lebih dinamis jika API aktif
+        try {
+            $promptData = [];
+            foreach ($jobs as $idx => $j) {
+                $promptData[] = [
+                    'index'          => $idx,
+                    'job_title'      => $j['job_title'],
+                    'company_name'   => $j['company_name'],
+                    'matched_skills' => $j['matched_skills'],
+                    'missing_skills' => $j['missing_skills'],
+                    'percentage'     => $j['match_percentage'],
+                ];
             }
-        }
 
-        asort($matched);
-        $matchedSkills = array_keys($matched);
+            $prompt = "Berikut adalah daftar kesesuaian lowongan magang untuk user (Jurusan: {$userMajor}, Skill user: " . implode(', ', array_slice($userSkills, 0, 10)) . "):\n"
+                . json_encode($promptData, JSON_UNESCAPED_UNICODE) . "\n\n"
+                . "Buatkan alasan personal rekomendasi berbahasa Indonesia yang meyakinkan (2-3 kalimat per lowongan). Sebutkan secara spesifik skill yang sudah dimiliki user yang cocok, serta 1-2 skill tambahan untuk memperkuat peluang diterima.\n"
+                . "Kembalikan HANYA JSON array dengan struktur: [{\"index\": 0, \"reason\": \"...\"}, ...]";
 
-        // Jika tidak ada skill yang cocok (misalnya file PDF gambar murni), sediakan fallback default
-        if (empty($matchedSkills)) {
-            $matchedSkills = [
-                'Problem Solving',
-                'Communication',
-                'Teamwork',
-                'Project Management',
-                'Git',
-                'Data Analysis',
-            ];
-        }
+            $res = $this->callGeminiDirectJson(
+                'Kamu adalah Senior Career Coach dan HR Specialist profesional.',
+                $prompt
+            );
 
-        // Ambil maksimal 15 keahlian unik
-        $finalSkills = array_values(array_unique(array_slice($matchedSkills, 0, 15)));
-
-        // Deteksi jurusan (major)
-        $majorPatterns = [
-            'Teknik Informatika'        => '/\b(teknik informatika|informatics|computer science|ilmu komputer)\b/i',
-            'Sistem Informasi'          => '/\b(sistem informasi|information systems?)\b/i',
-            'Sains Data'                => '/\b(sains data|data science)\b/i',
-            'Teknologi Informasi'       => '/\b(teknologi informasi|information technology)\b/i',
-            'Teknik Komputer'           => '/\b(teknik komputer|computer engineering)\b/i',
-            'Teknik Elektro'            => '/\b(teknik elektro|electrical engineering)\b/i',
-            'Rekayasa Perangkat Lunak'  => '/\b(rpl|rekayasa perangkat lunak|software engineering)\b/i',
-            'Manajemen Bisnis'          => '/\b(manajemen bisnis|business management|manajemen)\b/i',
-            'Bisnis Digital'            => '/\b(bisnis digital|digital business)\b/i',
-            'Akuntansi'                 => '/\b(akuntansi|accounting)\b/i',
-            'Ilmu Komunikasi'           => '/\b(ilmu komunikasi|communication science|komunikasi)\b/i',
-            'Desain Komunikasi Visual'  => '/\b(dkv|desain komunikasi visual|visual communication design)\b/i',
-            'Statistika'                => '/\b(statistika|statistics)\b/i',
-            'Matematika'                => '/\b(matematika|mathematics)\b/i',
-        ];
-
-        $detectedMajor = '';
-        foreach ($majorPatterns as $majorName => $mRegex) {
-            if (@preg_match($mRegex, $rawText)) {
-                $detectedMajor = $majorName;
-                break;
+            if (is_array($res)) {
+                $items = isset($res['data']) && is_array($res['data']) ? $res['data'] : $res;
+                foreach ($items as $item) {
+                    if (isset($item['index'], $item['reason']) && isset($fallbackEnriched[$item['index']])) {
+                        $reasonText = trim((string) $item['reason']);
+                        if (mb_strlen($reasonText) > 20) {
+                            $fallbackEnriched[$item['index']]['reason'] = $reasonText;
+                        }
+                    }
+                }
             }
+        } catch (\Throwable $e) {
+            // Log & gunakan fallback lokal tanpa mengganggu respons
+            Log::info('Gemini recommendations reason skipped/fallback: ' . $e->getMessage());
         }
 
-        return [
-            'skills' => $finalSkills,
-            'major'  => $detectedMajor,
-        ];
+        return $fallbackEnriched;
+    }
+
+    /**
+     * Kamus pola regex keahlian teknis/tools industri (berbagi dari GeminiService).
+     */
+    private function getSkillPatterns(): array
+    {
+        return $this->gemini->getUniversalSkillDictionary();
     }
 
     /**
@@ -710,7 +961,7 @@ class AnalyticsController extends Controller
      */
     private function fallbackSkillGap(array $data, array $userSkills): array
     {
-        $allPatterns = $this->getComprehensiveSkillPatterns();
+        $allPatterns = $this->gemini->getUniversalSkillDictionary();
         $jobText = ($data['job_title'] ?? '') . ' ' . ($data['job_description'] ?? '') . ' ' . (is_array($data['required_skills'] ?? null) ? implode(' ', $data['required_skills']) : (string) ($data['required_skills'] ?? ''));
 
         $requiredDetected = [];
@@ -783,292 +1034,10 @@ class AnalyticsController extends Controller
     }
 
     /**
-     * Kamus lengkap pola regex keahlian teknologi, data, AI, dan bisnis.
-     */
-    private function getComprehensiveSkillPatterns(): array
-    {
-        return [
-            // AI, Machine Learning & Data
-            'Python'                      => '/\bpython\b/i',
-            'SQL'                         => '/\bsql\b/i',
-            'Exploratory Data Analysis'   => '/\b(exploratory data analysis|eda)\b/i',
-            'Data Visualization'          => '/\bdata visuali[zs]ation\b/i',
-            'AI Engineering'              => '/\bai engineering\b/i',
-            'Machine Learning'            => '/\b(machine[\s\-]learning|ml)\b/i',
-            'Deep Learning'               => '/\bdeep[\s\-]learning\b/i',
-            'Data Science'                => '/\bdata[\s\-]science\b/i',
-            'Artificial Intelligence'     => '/\b(artificial intelligence|kecerdasan buatan)\b/i',
-            'CNN'                         => '/\b(cnn|convolutional neural network(s)?)\b/i',
-            'LLM'                         => '/\b(llm|large language model(s)?)\b/i',
-            'Natural Language Processing' => '/\b(nlp|natural language processing)\b/i',
-            'Computer Vision'             => '/\bcomputer vision\b/i',
-            'Prompt Engineering'          => '/\bprompt engineering\b/i',
-            'Generative AI'               => '/\b(generative ai|gen[\s\-]?ai)\b/i',
-            'TensorFlow'                  => '/\btensorflow\b/i',
-            'PyTorch'                     => '/\bpytorch\b/i',
-            'Scikit-Learn'                => '/\bscikit[\s\-]learn\b/i',
-            'Pandas'                      => '/\bpandas\b/i',
-            'NumPy'                       => '/\bnumpy\b/i',
-            'Matplotlib'                  => '/\bmatplotlib\b/i',
-            'Seaborn'                     => '/\bseaborn\b/i',
-            'Tableau'                     => '/\btableau\b/i',
-            'Power BI'                    => '/\bpower[\s\-]?bi\b/i',
-            'Data Analysis'               => '/\bdata analy(sis|st|tics)\b/i',
-            'Big Data'                    => '/\bbig[\s\-]data\b/i',
-            'Apache Spark'                => '/\b(apache\s*)?spark\b/i',
-            'Statistics'                  => '/\b(statistics|statistika)\b/i',
-
-            // Backend & Programming
-            'PHP'                         => '/\bphp\b/i',
-            'Laravel'                     => '/\blaravel\b/i',
-            'CodeIgniter'                 => '/\bcodeigniter\b/i',
-            'Node.js'                     => '/\bnode(\.js)?\b/i',
-            'Express.js'                  => '/\bexpress(\.js)?\b/i',
-            'NestJS'                      => '/\bnest(\.js)?\b/i',
-            'Django'                      => '/\bdjango\b/i',
-            'FastAPI'                     => '/\bfastapi\b/i',
-            'Flask'                       => '/\bflask\b/i',
-            'Java'                        => '/\bjava\b(?!\s*script)/i',
-            'Spring Boot'                 => '/\bspring(\s*boot)?\b/i',
-            'Go / Golang'                 => '/\b(golang|go\s+language)\b/i',
-            'C++'                         => '/\bc\+\+\b/i',
-            'C#'                          => '/\bc#|\bc\s*sharp\b/i',
-            'REST API'                    => '/\brest(ful)?\s*api\b/i',
-            'GraphQL'                     => '/\bgraphql\b/i',
-
-            // Frontend & Mobile
-            'Flutter'                     => '/\bflutter\b/i',
-            'Dart'                        => '/\bdart\b/i',
-            'React'                       => '/\breact(\.js)?\b(?!\s*native)/i',
-            'React Native'                => '/\breact[\s\-]native\b/i',
-            'JavaScript'                  => '/\b(javascript|js)\b/i',
-            'TypeScript'                  => '/\b(typescript|ts)\b/i',
-            'Vue.js'                      => '/\bvue(\.js)?\b/i',
-            'Next.js'                     => '/\bnext(\.js)?\b/i',
-            'HTML / CSS'                  => '/\b(html5?|css3?)\b/i',
-            'Tailwind CSS'                => '/\btailwind(\s*css)?\b/i',
-            'Bootstrap'                   => '/\bbootstrap\b/i',
-            'Android Development'         => '/\bandroid(\s*dev|\s*development)?\b/i',
-            'Kotlin'                      => '/\bkotlin\b/i',
-            'Swift'                       => '/\bswift\b/i',
-            'iOS Development'             => '/\bios(\s*dev|\s*development)?\b/i',
-
-            // Database, Cloud, DevOps
-            'MySQL'                       => '/\bmysql\b/i',
-            'PostgreSQL'                  => '/\bpostgres(ql)?\b/i',
-            'MongoDB'                     => '/\bmongo(db)?\b/i',
-            'Redis'                       => '/\bredis\b/i',
-            'Firebase'                    => '/\bfirebase\b/i',
-            'Git'                         => '/\bgit(hub|lab)?\b/i',
-            'Docker'                      => '/\bdocker\b/i',
-            'Kubernetes'                  => '/\b(kubernetes|k8s)\b/i',
-            'CI / CD'                     => '/\bci[\/\s\-]?cd\b/i',
-            'Linux'                       => '/\blinux\b/i',
-            'AWS'                         => '/\b(aws|amazon web services)\b/i',
-            'GCP'                         => '/\b(gcp|google cloud)\b/i',
-            'Azure'                       => '/\bazure\b/i',
-
-            // Design, Business & Soft Skills
-            'UI / UX'                     => '/\bui[\/\s\-]?ux\b/i',
-            'Figma'                       => '/\bfigma\b/i',
-            'Excel'                       => '/\b(excel|spreadsheets?)\b/i',
-            'Business Analysis'           => '/\bbusiness analy(sis|st)\b/i',
-            'Project Management'          => '/\bproject management\b/i',
-            'Product Management'          => '/\bproduct management\b/i',
-            'Agile / Scrum'               => '/\b(agile|scrum)\b/i',
-            'Digital Marketing'           => '/\bdigital marketing\b/i',
-            'SEO'                         => '/\b(seo|search engine optimization)\b/i',
-            'Copywriting'                 => '/\b(copywriting|copywriter|content writing)\b/i',
-            'Public Speaking'             => '/\bpublic speaking\b/i',
-            'Communication'               => '/\bcommunication\b|\bkomunikasi\b/i',
-            'Teamwork'                    => '/\bteamwork\b|\bkerja\s*tim\b/i',
-            'Problem Solving'             => '/\bproblem[\s\-]solving\b/i',
-            'Critical Thinking'           => '/\bcritical thinking\b/i',
-        ];
-    }
-
-    /**
-     * Ekstraksi teks sederhana dari file PDF murni tanpa library eksternal.
-     */
-    private function extractTextFromPdf(string $filePath): string
-    {
-        $content = @file_get_contents($filePath);
-        if (! $content) {
-            return '';
-        }
-
-        $text = '';
-        if (preg_match_all('/stream[\r\n]+(.*?)[\r\n]+endstream/s', $content, $matches)) {
-            foreach ($matches[1] as $stream) {
-                $uncompressed = @gzuncompress($stream);
-                if ($uncompressed === false) {
-                    $uncompressed = $stream;
-                }
-
-                if (preg_match_all('/\((.*?)\)\s*T[jJ]/s', $uncompressed, $textMatches)) {
-                    $text .= implode(' ', $textMatches[1]) . "\n";
-                } elseif (preg_match_all('/\[(.*?)\]\s*TJ/s', $uncompressed, $tjMatches)) {
-                    foreach ($tjMatches[1] as $tj) {
-                        if (preg_match_all('/\((.*?)\)/s', $tj, $subMatches)) {
-                            $text .= implode('', $subMatches[1]) . ' ';
-                        }
-                    }
-                    $text .= "\n";
-                }
-            }
-        }
-
-        if (trim($text) === '') {
-            $printable = preg_replace('/[^\x20-\x7E\r\n\t]/', ' ', $content);
-            $text = preg_replace('/\s+/', ' ', (string) $printable);
-        }
-
-        $text = preg_replace_callback('/\\\\([0-7]{1,3})/', fn ($m) => chr(octdec($m[1])), $text);
-        $text = str_replace(['\\(', '\\)', '\\\\'], ['(', ')', '\\'], $text);
-        $text = preg_replace('/[ \t]+/', ' ', $text);
-        $text = preg_replace("/\n{3,}/", "\n\n", $text);
-
-        return trim($text);
-    }
-
-    /**
-     * Panggilan langsung ke Gemini API menggunakan Http::withoutVerifying()->timeout(12)
-     * dan opsi IPv4 agar aman dari error SSL & DNS cURL di Windows.
+     * Panggilan ke GeminiService dengan parameter string tunggal.
      */
     private function callGeminiDirectJson(string $system, string $prompt): array
     {
-        $key   = (string) env('GEMINI_API_KEY', '');
-        if ($key === '') {
-            throw new \Exception('GEMINI_API_KEY belum disetel di file .env backend.');
-        }
-
-        $model = (string) env('GEMINI_MODEL', 'gemini-2.5-flash');
-
-        $payload = [
-            'systemInstruction' => ['parts' => [['text' => $system]]],
-            'contents'          => [['role' => 'user', 'parts' => [['text' => $prompt]]]],
-            'generationConfig'  => [
-                'temperature'      => 0.3,
-                'responseMimeType' => 'application/json',
-                'maxOutputTokens'  => 8192,
-            ],
-        ];
-
-        $response = Http::withoutVerifying()
-            ->withOptions([
-                'curl' => [
-                    CURLOPT_IPRESOLVE => CURL_IPRESOLVE_V4,
-                ],
-            ])
-            ->timeout(12)
-            ->withHeaders(['x-goog-api-key' => $key])
-            ->acceptJson()
-            ->asJson()
-            ->post('https://generativelanguage.googleapis.com/v1beta/models/' . $model . ':generateContent', $payload);
-    
-        if (! $response->successful()) {
-            throw new \Exception('Gemini API HTTP ' . $response->status() . ': ' . $response->body());
-        }
-
-        $parts = $response->json('candidates.0.content.parts', []);
-        $raw = collect($parts)->reject(fn ($p) => ! empty($p['thought']))->pluck('text')->implode('');
-
-        $clean = trim(preg_replace('/^```(?:json)?\s*|\s*```$/i', '', trim($raw)));
-        $decoded = json_decode($clean, true);
-
-        if (! is_array($decoded)) {
-            $start = strpos($clean, '{');
-            $end   = strrpos($clean, '}');
-            if ($start !== false && $end !== false && $end > $start) {
-                $decoded = json_decode(substr($clean, $start, $end - $start + 1), true);
-            }
-        }
-
-        if (! is_array($decoded)) {
-            throw new \Exception('Respon Gemini tidak valid atau bukan JSON.');
-        }
-
-        return $decoded;
-    }
-
-    /**
-     * Panggilan langsung ke Gemini API dengan inline_data base64 PDF.
-     * Menggunakan Http::withoutVerifying()->timeout(12) dan opsi IPv4 agar aman dari error SSL & DNS cURL di Windows.
-     */
-    private function extractFromPdfBase64(string $base64Pdf): array
-    {
-        $key   = (string) env('GEMINI_API_KEY', '');
-        if ($key === '') {
-            throw new \Exception('GEMINI_API_KEY belum disetel di file .env backend.');
-        }
-
-        $model = (string) env('GEMINI_MODEL', 'gemini-2.5-flash');
-
-        $prompt = "Berikut adalah file PDF CV kandidat. Ekstrak informasi berikut:\n"
-            . "1. skills: maksimal 15 keahlian (skills) teknis maupun non-teknis yang bersih dan relevan.\n"
-            . "2. major: jurusan atau bidang studi kandidat.\n\n"
-            . "Format JSON yang harus dikembalikan:\n"
-            . '{"skills": ["Skill1", "Skill2"], "major": "Nama Jurusan"}';
-
-        $payload = [
-            'systemInstruction' => ['parts' => [['text' => self::EXTRACT_CV_SYSTEM]]],
-            'contents' => [
-                [
-                    'role'  => 'user',
-                    'parts' => [
-                        [
-                            'inline_data' => [
-                                'mime_type' => 'application/pdf',
-                                'data'      => $base64Pdf,
-                            ],
-                        ],
-                        [
-                            'text' => $prompt,
-                        ],
-                    ],
-                ],
-            ],
-            'generationConfig' => [
-                'temperature'      => 0.3,
-                'responseMimeType' => 'application/json',
-                'maxOutputTokens'  => 4096,
-            ],
-        ];
-
-        $response = Http::withoutVerifying()
-            ->withOptions([
-                'curl' => [
-                    CURLOPT_IPRESOLVE => CURL_IPRESOLVE_V4,
-                ],
-            ])
-            ->timeout(12)
-            ->withHeaders(['x-goog-api-key' => $key])
-            ->acceptJson()
-            ->asJson()
-            ->post('https://generativelanguage.googleapis.com/v1beta/models/' . $model . ':generateContent', $payload);
-
-        if (! $response->successful()) {
-            throw new \Exception('Gemini API HTTP ' . $response->status() . ': ' . $response->body());
-        }
-
-        $parts = $response->json('candidates.0.content.parts', []);
-        $raw = collect($parts)->reject(fn ($p) => ! empty($p['thought']))->pluck('text')->implode('');
-
-        $clean = trim(preg_replace('/^```(?:json)?\s*|\s*```$/i', '', trim($raw)));
-        $decoded = json_decode($clean, true);
-
-        if (! is_array($decoded)) {
-            $start = strpos($clean, '{');
-            $end   = strrpos($clean, '}');
-            if ($start !== false && $end !== false && $end > $start) {
-                $decoded = json_decode(substr($clean, $start, $end - $start + 1), true);
-            }
-        }
-
-        if (! is_array($decoded)) {
-            throw new \Exception('Respon Gemini tidak valid atau bukan JSON.');
-        }
-
-        return $decoded;
+        return $this->gemini->jsonWithParts($system, [['text' => $prompt]], 0.2, 60);
     }
 }

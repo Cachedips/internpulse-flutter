@@ -428,4 +428,8 @@ class ApiService {
   /// [Fitur 4] Skill Scarcity: demand rate, supply rate, scarcity index, category, dan user_has_skill.
   Future<Map<String, dynamic>> skillScarcity() =>
       get('/analytics/skill-scarcity');
+
+  /// [Fitur 5] Job Recommendations: rekomendasi magang & persentase peluang diterima berbasis CV.
+  Future<Map<String, dynamic>> getJobRecommendations() =>
+      get('/analytics/recommendations');
 }

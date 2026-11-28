@@ -69,7 +69,10 @@ class _JobFeedScreenState extends State<JobFeedScreen> {
                         onSubmitted: jp.setSearch,
                         decoration: InputDecoration(
                           hintText: 'Cari posisi, keahlian, atau perusahaan...',
-                          prefixIcon: const Icon(Icons.search, color: AppColors.textSecondary),
+                          prefixIcon: const Icon(
+                            Icons.search,
+                            color: AppColors.textSecondary,
+                          ),
                           suffixIcon: _searchCtrl.text.isEmpty
                               ? null
                               : IconButton(
@@ -81,18 +84,28 @@ class _JobFeedScreenState extends State<JobFeedScreen> {
                                 ),
                           fillColor: const Color(0xFFF8FAFC),
                           filled: true,
-                          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 12,
+                          ),
                           border: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(12),
-                            borderSide: const BorderSide(color: AppColors.border),
+                            borderSide: const BorderSide(
+                              color: AppColors.border,
+                            ),
                           ),
                           enabledBorder: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(12),
-                            borderSide: const BorderSide(color: AppColors.border),
+                            borderSide: const BorderSide(
+                              color: AppColors.border,
+                            ),
                           ),
                           focusedBorder: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(12),
-                            borderSide: const BorderSide(color: AppColors.accentDark, width: 1.5),
+                            borderSide: const BorderSide(
+                              color: AppColors.accentDark,
+                              width: 1.5,
+                            ),
                           ),
                         ),
                       ),
@@ -105,20 +118,36 @@ class _JobFeedScreenState extends State<JobFeedScreen> {
                             child: Row(
                               children: [
                                 for (final loc in kLocations)
-                                  Padding(
-                                    padding: const EdgeInsets.only(right: 8),
-                                    child: FilterChip(
-                                      label: Text(loc),
-                                      selected: jp.location == loc,
-                                      selectedColor: AppColors.primary.withValues(alpha: 0.12),
-                                      checkmarkColor: AppColors.primary,
-                                      labelStyle: TextStyle(
-                                        fontSize: 12,
-                                        fontWeight: jp.location == loc ? FontWeight.w600 : FontWeight.normal,
-                                        color: jp.location == loc ? AppColors.primary : AppColors.textPrimary,
-                                      ),
-                                      onSelected: (_) => jp.setLocation(loc),
-                                    ),
+                                  Builder(
+                                    builder: (context) {
+                                      final isSelected =
+                                          (loc == 'Semua' &&
+                                              jp.location == null) ||
+                                          jp.location == loc;
+                                      return Padding(
+                                        padding: const EdgeInsets.only(
+                                          right: 8,
+                                        ),
+                                        child: FilterChip(
+                                          label: Text(loc),
+                                          selected: isSelected,
+                                          selectedColor: AppColors.primary
+                                              .withValues(alpha: 0.12),
+                                          checkmarkColor: AppColors.primary,
+                                          labelStyle: TextStyle(
+                                            fontSize: 12,
+                                            fontWeight: isSelected
+                                                ? FontWeight.w600
+                                                : FontWeight.normal,
+                                            color: isSelected
+                                                ? AppColors.primary
+                                                : AppColors.textPrimary,
+                                          ),
+                                          onSelected: (_) =>
+                                              jp.setLocation(loc),
+                                        ),
+                                      );
+                                    },
                                   ),
                               ],
                             ),
@@ -142,7 +171,10 @@ class _JobFeedScreenState extends State<JobFeedScreen> {
                                   child: Text('Semua jurusan'),
                                 ),
                                 ...kMajors.map(
-                                  (m) => DropdownMenuItem<String?>(value: m, child: Text(m)),
+                                  (m) => DropdownMenuItem<String?>(
+                                    value: m,
+                                    child: Text(m),
+                                  ),
                                 ),
                               ],
                               onChanged: jp.setMajor,
@@ -236,7 +268,11 @@ class _JobFeedScreenState extends State<JobFeedScreen> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Icon(Icons.search_off_outlined, size: 48, color: AppColors.textSecondary),
+              const Icon(
+                Icons.search_off_outlined,
+                size: 48,
+                color: AppColors.textSecondary,
+              ),
               const SizedBox(height: 12),
               const Text(
                 'Tidak ada lowongan ditemukan.',
@@ -345,10 +381,13 @@ class _JobCardState extends State<_JobCard> {
                         widget.job.jobTitle,
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
-                        style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        style: Theme.of(context).textTheme.titleMedium
+                            ?.copyWith(
                               fontWeight: FontWeight.bold,
                               fontSize: 15,
-                              color: _isHovered ? AppColors.primary : AppColors.textPrimary,
+                              color: _isHovered
+                                  ? AppColors.primary
+                                  : AppColors.textPrimary,
                             ),
                       ),
                     ),
@@ -359,14 +398,17 @@ class _JobCardState extends State<_JobCard> {
                 const SizedBox(height: 6),
                 Row(
                   children: [
-                    const Icon(Icons.business_outlined, size: 14, color: AppColors.textSecondary),
+                    const Icon(
+                      Icons.business_outlined,
+                      size: 14,
+                      color: AppColors.textSecondary,
+                    ),
                     const SizedBox(width: 4),
                     Expanded(
                       child: Text(
                         widget.job.companyName,
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                              fontWeight: FontWeight.w500,
-                            ),
+                        style: Theme.of(context).textTheme.bodySmall
+                            ?.copyWith(fontWeight: FontWeight.w500),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                       ),
@@ -379,17 +421,18 @@ class _JobCardState extends State<_JobCard> {
                   spacing: 8,
                   runSpacing: 4,
                   children: [
-                    _Meta(icon: Icons.place_outlined, text: widget.job.location),
+                    _Meta(
+                      icon: Icons.location_on_outlined,
+                      text: widget.job.location,
+                      isLocation: true,
+                    ),
                     if (widget.job.majorCategory != null)
                       _Meta(
                         icon: Icons.school_outlined,
                         text: widget.job.majorCategory!,
                       ),
                     if (widget.job.isLocal)
-                      const _Meta(
-                        icon: Icons.verified_outlined,
-                        text: 'Lokal',
-                      ),
+                      const _Meta(icon: Icons.verified_outlined, text: 'Lokal'),
                   ],
                 ),
               ],
@@ -404,26 +447,38 @@ class _JobCardState extends State<_JobCard> {
 class _Meta extends StatelessWidget {
   final IconData icon;
   final String text;
-  const _Meta({required this.icon, required this.text});
+  final bool isLocation;
+  const _Meta({
+    required this.icon,
+    required this.text,
+    this.isLocation = false,
+  });
 
   @override
   Widget build(BuildContext context) => Container(
     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
     decoration: BoxDecoration(
-      color: const Color(0xFFF1F5F9),
+      color: isLocation ? const Color(0xFFEFF6FF) : const Color(0xFFF1F5F9),
       borderRadius: BorderRadius.circular(6),
+      border: isLocation ? Border.all(color: const Color(0xFFBFDBFE)) : null,
     ),
     child: Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Icon(icon, size: 12, color: AppColors.accentDark),
+        Icon(
+          icon,
+          size: 13,
+          color: isLocation ? const Color(0xFF2563EB) : AppColors.accentDark,
+        ),
         const SizedBox(width: 4),
         Text(
           text,
-          style: const TextStyle(
+          style: TextStyle(
             fontSize: 11,
-            fontWeight: FontWeight.w500,
-            color: AppColors.textSecondary,
+            fontWeight: isLocation ? FontWeight.w600 : FontWeight.w500,
+            color: isLocation
+                ? const Color(0xFF1E40AF)
+                : AppColors.textSecondary,
           ),
         ),
       ],
